@@ -1,0 +1,60 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.10.3
+    working_directory: /go/src/bitbucket.org/revenuemonster/kubernetes-example-gateway
+    environment:
+      ENVIRONMENT: ''
+      DOCKER_FILE: ''
+      GOOGLE_APPLICATION_CREDENTIALS: /home/circleci/gcp-key.json
+      KUBECONFIG: /home/circleci/config
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+
+      - run:
+          name: Set Environment
+          command: |
+            echo 'export ENVIRONMENT=dev' >> $BASH_ENV
+            echo 'export DOCKER_FILE=Dockerfile' >> $BASH_ENV
+
+      - run:
+          name: Install Kubectl
+          command: |
+            sudo apt-get update && sudo apt-get install -y apt-transport-https
+            curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+            sudo touch /etc/apt/sources.list.d/kubernetes.list
+            echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee -a /etc/apt/sources.list.d/kubernetes.list
+            sudo apt-get update
+            sudo apt-get install -y kubectl
+            echo $DOCKER_FILE
+
+      - run:
+          name: Docker Login and Set Kubectl Credential
+          command: |
+            echo ${ALIYUN_CREDENTIAL_KEY} | base64 --decode --ignore-garbage > ${KUBECONFIG}
+            docker login --username=${ALIYUN_DOCKER_USERNAME} registry-intl.ap-southeast-3.aliyuncs.com --password=${ALIYUN_DOCKER_PASSWORD}
+
+      - run:
+          name: Docker Build and Push to Container Registry
+          command: |
+            docker build -t registry-intl.ap-southeast-3.aliyuncs.com/findev/kubernetes-example-gateway:${CIRCLE_SHA1} -t registry-intl.ap-southeast-3.aliyuncs.com/findev/kubernetes-example-gateway:latest  . -f ${DOCKER_FILE}
+            docker push registry-intl.ap-southeast-3.aliyuncs.com/findev/kubernetes-example-gateway:${CIRCLE_SHA1}
+            docker push registry-intl.ap-southeast-3.aliyuncs.com/findev/kubernetes-example-gateway:latest
+
+      - deploy:
+          name: Set New Image to Deployment
+          command: |
+            kubectl set image deployment rm-gateway rm-gateway=registry-intl.ap-southeast-3.aliyuncs.com/findev/kubernetes-example-gateway:${CIRCLE_SHA1} --namespace=${ENVIRONMENT}
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - build:
+          filters: # using regex filters requires the entire branch to match
+            branches:
+              only: # only branches matching the below regex filters will run
+                - master
